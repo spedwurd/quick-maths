@@ -1,0 +1,8 @@
+{
+  "name": "quick-maths",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "redis": "^5.5.0"
+  }
+}

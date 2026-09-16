@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>quick maths</title>
+<style>
+  :root { --bg: #fff; --fg: #000; --dim: #888; --faint: #ccc; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #000; --fg: #fff; --dim: #888; --faint: #444; }
+  }
+  :root[data-theme="dark"] { --bg: #000; --fg: #fff; --dim: #888; --faint: #444; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background: var(--bg);
+    color: var(--fg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding-block: 24px; padding-inline: 24px;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+  [hidden] { display: none !important; }
+  .screen { width: 100%; max-width: 640px; text-align: center; }
+  .small { font-size: 14px; line-height: 1.6; }
+  .dim { color: var(--dim); }
+  .big { font-size: clamp(40px, 10vw, 96px); line-height: 1.1; font-weight: 400; }
+  .hud {
+    position: fixed; top: 20px; left: 24px; right: 24px;
+    display: flex; justify-content: space-between;
+    font-size: 14px;
+  }
+  input {
+    font: inherit; color: inherit; background: none;
+    border: 0; border-bottom: 2px solid var(--fg); outline: 0;
+    text-align: left; padding: 0 0 4px; border-radius: 0;
+    width: 3.2em; caret-color: var(--fg);
+  }
+  input::placeholder { color: var(--faint); }
+  #q { white-space: nowrap; margin-bottom: 40px; }
+  #q input { font-size: inherit; }
+  #name { width: 8em; text-align: center; font-size: 24px; }
+  #adminkey { width: 10em; text-align: center; font-size: 14px; border-bottom-width: 1px; }
+  table { margin: 24px auto 0; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+  td { padding: 4px 14px; text-align: left; }
+  td:first-child { color: var(--dim); text-align: right; padding-left: 0; }
+  td:last-child { text-align: right; padding-right: 0; }
+  tr.me td { font-weight: 700; }
+  button {
+    font: inherit; font-size: 14px; color: var(--fg); background: none;
+    border: 0; padding: 0; cursor: pointer; text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .row { margin-top: 32px; }
+  .row > * + * { margin-left: 24px; }
+  #status { margin-top: 12px; min-height: 1.6em; }
+  #reset { color: var(--faint); margin-top: 48px; display: block; margin-inline: auto; }
+  #resetrow { margin-top: 48px; }
+</style>
+</head>
+<body>
+
+<div id="start" class="screen">
+  <div class="big">quick maths</div>
+  <p class="small dim" style="margin-top:16px">60 seconds. as many as you can.<br>answers advance automatically. enter skips (−1).<br>join our classroom! p6rgb35</p>
+  <div class="row"><button id="go">press enter to start</button></div>
+  <table id="lb-start"></table>
+  <p id="status" class="small dim"></p>
+  <button id="reset" class="small">reset leaderboard</button>
+  <div id="resetrow" hidden>
+    <input id="adminkey" type="password" placeholder="admin key" autocomplete="off">
+    <p class="small dim" style="margin-top:8px">enter to erase every score · esc to cancel</p>
+  </div>
+</div>
+
+<div id="play" class="screen" hidden>
+  <div class="hud"><span id="score">0</span><span id="time">60</span></div>
+  <div class="big" id="q"><span id="prob"></span> = <input id="ans" inputmode="numeric" autocomplete="off" autocorrect="off" spellcheck="false"></div>
+</div>
+
+<div id="end" class="screen" hidden>
+  <div class="big" id="final">0</div>
+  <p class="small dim" style="margin-top:8px" id="summary"></p>
+  <div class="row" id="namerow">
+    <input id="name" placeholder="your name" maxlength="14" autocomplete="off" autocorrect="off" spellcheck="false">
+    <p class="small dim" style="margin-top:12px" id="namehint">enter to save</p>
+  </div>
+  <table id="lb-end"></table>
+  <div class="row" id="againrow" hidden><button id="again">enter to play again</button></div>
+</div>
+
+<script>
+(() => {
+  const DURATION = 60;
+  const API = '/api/scores';
+  const LOCAL = 'quickmaths.leaderboard';
+
+  const $ = id => document.getElementById(id);
+  const ri = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
+  const pick = a => a[Math.floor(Math.random() * a.length)];
+
+  // ---- problem generators: return [display, integerAnswer] ----
+  const gens = [
+    [3, () => { const a = ri(11, 99), b = ri(11, 99); return [`${a} + ${b}`, a + b]; }],
+    [3, () => { const a = ri(20, 99), b = ri(2, a - 1); return [`${a} − ${b}`, a - b]; }],
+    [3, () => { const a = ri(3, 12), b = ri(3, 12); return [`${a} × ${b}`, a * b]; }],
+    [2, () => { const a = ri(12, 30), b = ri(3, 9); return [`${a} × ${b}`, a * b]; }],
+    [2, () => { const b = ri(2, 12), q = ri(2, 12); return [`${b * q} ÷ ${b}`, q]; }],
+    [2, () => { const n = ri(4, 20); return [`${n}²`, n * n]; }],
+    [1, () => { const n = ri(4, 20); return [`√${n * n}`, n]; }],
+    [1, () => { const n = ri(2, 10); return [`2${String(n).replace(/\d/g, d => '⁰¹²³⁴⁵⁶⁷⁸⁹'[d])}`, 2 ** n]; }],
+    [2, () => {
+      const [p, step] = pick([[10, 10], [20, 5], [25, 4], [50, 2], [75, 4], [5, 20]]);
+      const n = step * ri(3, 40);
+      return [`${p}% of ${n}`, n * p / 100];
+    }],
+    [2, () => {
+      const a = ri(2, 9), x = ri(2, 12), b = ri(1, 20);
+      if (Math.random() < 0.5) return [`${a}x + ${b} = ${a * x + b}`, x];
+      const bb = Math.min(b, a * x - 1);
+      return [`${a}x − ${bb} = ${a * x - bb}`, x];
+    }],
+  ];
+  const bag = gens.flatMap(([w, g]) => Array(w).fill(g));
+
+  let last = '';
+  function next() {
+    let d, a;
+    do { [d, a] = pick(bag)(); } while (d === last);
+    last = d;
+    return [d, a];
+  }
+
+  // ---- leaderboard: shared via API, browser storage if the API is unreachable ----
+  let board = [];
+  let online = false;
+
+  const localLoad = () => { try { return JSON.parse(localStorage.getItem(LOCAL)) || []; } catch { return []; } };
+  const localSave = rows => { try { localStorage.setItem(LOCAL, JSON.stringify(rows)); } catch {} };
+  const sortRows = rows => rows.sort((a, b) => b.score - a.score || a.t - b.t);
+
+  async function fetchBoard() {
+    try {
+      const r = await fetch(API, { cache: 'no-store' });
+      if (!r.ok) throw new Error(r.status);
+      board = await r.json(); online = true;
+    } catch {
+      board = sortRows(localLoad()); online = false;
+    }
+  }
+
+  async function postScore(name, score) {
+    try {
+      const r = await fetch(API, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name, score }),
+      });
+      if (!r.ok) throw new Error(r.status);
+      const data = await r.json();
+      board = data.board; online = true;
+      return data.id;
+    } catch {
+      const rows = localLoad();
+      const id = String(Date.now());
+      rows.push({ id, name, score, t: Number(id) });
+      localSave(rows);
+      board = sortRows(rows); online = false;
+      return id;
+    }
+  }
+
+  function render(table, meId = null) {
+    table.innerHTML = '';
+    board.slice(0, 10).forEach((r, i) => {
+      const tr = table.insertRow();
+      if (r.id === meId) tr.className = 'me';
+      tr.insertCell().textContent = i + 1;
+      tr.insertCell().textContent = r.name;
+      tr.insertCell().textContent = r.score;
+    });
+    $('reset').hidden = board.length === 0;
+  }
+
+  // ---- game state ----
+  let answer = 0, score = 0, solved = 0, skipped = 0, tick = null, endAt = 0, saving = false;
+  const ans = $('ans');
+
+  function show(name) {
+    for (const s of ['start', 'play', 'end']) $(s).hidden = s !== name;
+  }
+
+  function serve() {
+    const [d, a] = next();
+    answer = a;
+    $('prob').textContent = d;
+    ans.value = '';
+  }
+
+  function start() {
+    score = 0; solved = 0; skipped = 0;
+    $('score').textContent = '0';
+    $('time').textContent = DURATION;
+    show('play');
+    serve();
+    ans.focus();
+    endAt = performance.now() + DURATION * 1000;
+    tick = setInterval(() => {
+      const left = Math.max(0, Math.ceil((endAt - performance.now()) / 1000));
+      $('time').textContent = left;
+      if (left === 0) finish();
+    }, 100);
+  }
+
+  function finish() {
+    clearInterval(tick);
+    ans.blur();
+    $('final').textContent = score;
+    $('summary').textContent = `${solved} solved · ${skipped} skipped`;
+    $('namerow').hidden = false;
+    $('againrow').hidden = true;
+    $('namehint').textContent = 'enter to save';
+    $('name').value = '';
+    render($('lb-end'));
+    show('end');
+    $('name').focus();
+    fetchBoard().then(() => { if (!$('end').hidden && !$('namerow').hidden) render($('lb-end')); });
+  }
+
+  ans.addEventListener('input', () => {
+    const v = ans.value.replace(/\D/g, '');
+    if (v !== ans.value) ans.value = v;
+    if (v !== '' && Number(v) === answer) {
+      score++; solved++;
+      $('score').textContent = score;
+      serve();
+    }
+  });
+
+  ans.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); score--; skipped++; $('score').textContent = score; serve(); }
+  });
+
+  async function submitName() {
+    if (saving) return;
+    saving = true;
+    const name = $('name').value.trim() || 'anon';
+    $('namehint').textContent = 'saving…';
+    const id = await postScore(name, score);
+    saving = false;
+    $('namerow').hidden = true;
+    render($('lb-end'), id);
+    $('againrow').hidden = false;
+    $('again').focus();
+  }
+
+  $('name').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); submitName(); }
+  });
+
+  function toStart() { show('start'); render($('lb-start')); fetchBoard().then(() => render($('lb-start'))); }
+
+  $('go').addEventListener('click', start);
+  $('again').addEventListener('click', start);
+
+  // ---- reset (needs the ADMIN_KEY set on the server) ----
+  function hideReset() { $('resetrow').hidden = true; $('adminkey').value = ''; }
+  $('reset').addEventListener('click', () => { $('resetrow').hidden = false; $('adminkey').focus(); });
+  $('adminkey').addEventListener('keydown', async e => {
+    if (e.key === 'Escape') { hideReset(); return; }
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const key = $('adminkey').value;
+    hideReset();
+    if (!online) { localSave([]); board = []; render($('lb-start')); return; }
+    const r = await fetch(API, { method: 'DELETE', headers: { 'x-admin-key': key } }).catch(() => null);
+    $('status').textContent = r && r.ok ? '' : 'wrong admin key';
+    await fetchBoard();
+    render($('lb-start'));
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || e.target.tagName === 'INPUT') return;
+    if (!$('start').hidden) start();
+    else if (!$('end').hidden) {
+      if (!$('namerow').hidden) submitName();
+      else start();
+    }
+  });
+
+  // keep the answer box focused during play (taps/clicks elsewhere shouldn't lose it)
+  document.addEventListener('click', () => { if (!$('play').hidden) ans.focus(); });
+
+  toStart();
+})();
+</script>
+</body>
+</html>
